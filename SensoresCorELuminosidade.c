@@ -12,6 +12,9 @@
 #include "semphr.h"
 #include "queue.h"
 
+#define WS2812_PIN 7
+#define BUZZER_PIN 21
+
 #define I2C_PORT i2c0 // i2c0 pinos 0 e 1, i2c1 pinos 2 e 3
 #define I2C_SDA 0     // 0 ou 2
 #define I2C_SCL 1     // 1 ou 3
@@ -34,6 +37,11 @@
 #define RDATA_REG 0x96 //  "Red"
 #define GDATA_REG 0x98 //  "Green"
 #define BDATA_REG 0x9A //  "Blue"
+
+ssd1306_t ssd;
+PIO pio;
+uint offset;
+uint sm;
 
 // Função para escrever um valor em um registro do GY-33
 void gy33_write_register(uint8_t reg, uint8_t value)
@@ -68,10 +76,11 @@ void gy33_read_color(uint16_t *r, uint16_t *g, uint16_t *b, uint16_t *c)
     *b = gy33_read_register(BDATA_REG);
 }
 
-int main()
+void setup()
 {
-    stdio_init_all();
-
+    gpio_init(BUZZER_PIN);
+    gpio_set_dir(BUZZER_PIN, GPIO_OUT);
+    
     // I2C do Display pode ser diferente dos sensores. Funcionando em 400Khz.
     i2c_init(I2C_PORT_DISP, 400 * 1000);
 
@@ -79,7 +88,6 @@ int main()
     gpio_set_function(I2C_SCL_DISP, GPIO_FUNC_I2C);
     gpio_pull_up(I2C_SDA_DISP);
     gpio_pull_up(I2C_SCL_DISP);
-    ssd1306_t ssd;
     ssd1306_init(&ssd, WIDTH, HEIGHT, false, endereco, I2C_PORT_DISP);
     ssd1306_config(&ssd);
     ssd1306_send_data(&ssd);
@@ -98,6 +106,16 @@ int main()
     // Inicializa o sensor de luz BH1750
     bh1750_power_on(I2C_PORT);
 
+    pio = pio0;
+    offset = pio_add_program(pio, &blink_program);
+    sm = pio_claim_unused_sm(pio, true);
+    blink_program_init(pio, sm, offset, WS2812_PIN);
+}
+
+int main()
+{
+    stdio_init_all();
+
     char str_lux[10]; // Buffer para armazenar a string
 
     printf("Iniciando GY-33...\n");
@@ -109,7 +127,7 @@ int main()
     char str_clear[5];
 
     bool cor = true;
-    while (true)
+    /*while (true)
     {
         uint16_t r, g, b, c;
         gy33_read_color(&r, &g, &b, &c);
@@ -140,5 +158,8 @@ int main()
         ssd1306_send_data(&ssd);                             // Atualiza o display
 
         sleep_ms(500);
-    }
+    }*/
+
+    vTaskStartScheduler();
+    panic_unsupported();
 }
