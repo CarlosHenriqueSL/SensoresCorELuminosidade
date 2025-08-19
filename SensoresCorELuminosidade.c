@@ -11,6 +11,7 @@
 #include "task.h"
 #include "semphr.h"
 #include "queue.h"
+#include <math.h>
 
 #define WS2812_PIN 7
 #define BUZZER_PIN 21
@@ -224,9 +225,6 @@ void setup()
     // Inicializa o sensor de luz BH1750
     bh1750_power_on(I2C_PORT);
 
-    // Inicializa o sensor GY302
-    gy302_init();
-
     pio = pio0;
     offset = pio_add_program(pio, &blink_program);
     sm = pio_claim_unused_sm(pio, true);
@@ -236,12 +234,14 @@ void setup()
 int main()
 {
     stdio_init_all();
-
+    setup();
+    
     char str_lux[10]; // Buffer para armazenar a string
 
     printf("Iniciando GY-33...\n");
     gy33_init();
 
+    // Inicializa o sensor GY302
     printf("Iniciando GY302...\n");
     gy302_init();
 
@@ -260,7 +260,7 @@ int main()
     char str_clear[5];
 
     bool cor = true;
-    /*while (true)
+    while (true)
     {
         uint16_t r, g, b, c;
         gy33_read_color(&r, &g, &b, &c);
@@ -277,21 +277,31 @@ int main()
 
         sprintf(str_lux, "%d Lux", lux); // Converte o inteiro em string
 
-        // cor = !cor;
+        //cor = !cor;
         //  Atualiza o conteúdo do display com animações
-        ssd1306_fill(&ssd, !cor);                            // Limpa o display
-        ssd1306_rect(&ssd, 3, 3, 122, 60, cor, !cor);        // Desenha um retângulo
-        ssd1306_line(&ssd, 3, 25, 123, 25, cor);             // Desenha uma linha
-        ssd1306_line(&ssd, 3, 37, 123, 37, cor);             // Desenha uma linha
-        ssd1306_draw_string(&ssd, "CEPEDI   TIC37", 8, 6);   // Desenha uma string
-        ssd1306_draw_string(&ssd, "EMBARCATECH", 20, 16);    // Desenha uma string
-        ssd1306_draw_string(&ssd, "Sensor  BH1750", 10, 28); // Desenha uma string
-        ssd1306_line(&ssd, 63, 25, 63, 37, cor);             // Desenha uma linha vertical
-        ssd1306_draw_string(&ssd, str_lux, 14, 41);          // Desenha uma string
-        ssd1306_send_data(&ssd);                             // Atualiza o display
+        ssd1306_fill(&ssd, !cor);                               // Limpa o display
+
+        // Cabeçalho
+        ssd1306_draw_string(&ssd, "CEPEDI   TIC37", 8, 6);      
+        ssd1306_draw_string(&ssd, "EMBARCATECH", 20, 14);       
+
+        // Linhas separadoras
+        ssd1306_line(&ssd, 3, 24, 123, 24, cor);               
+        ssd1306_line(&ssd, 3, 40, 123, 40, cor);                
+
+        // Sensor BH1750 
+        ssd1306_draw_string(&ssd, "BH1750:", 8, 28);           
+        ssd1306_draw_string(&ssd, str_lux, 70, 28);            
+
+        // Sensor GY33 
+        ssd1306_draw_string(&ssd, "GY33:", 8, 46);          
+        //ssd1306_draw_string(&ssd, str_gy33, 70, 46);         
+
+        // Atualiza o display
+        ssd1306_send_data(&ssd);
 
         sleep_ms(500);
-    }*/
+    }
 
     vTaskStartScheduler();
     panic_unsupported();
