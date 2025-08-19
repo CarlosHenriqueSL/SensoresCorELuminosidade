@@ -27,6 +27,25 @@
 
 #define GY33_I2C_ADDR 0x29
 
+// GY302 Light Sensor definitions
+#define GY302_S0_PIN 8
+#define GY302_S1_PIN 9
+#define GY302_S2_PIN 10
+#define GY302_S3_PIN 11
+#define GY302_OUT_PIN 12
+
+// GY302 frequency scaling options
+#define GY302_POWER_DOWN 0x00
+#define GY302_2_PERCENT   0x01
+#define GY302_20_PERCENT  0x02
+#define GY302_100_PERCENT 0x03
+
+// GY302 color filter options
+#define GY302_RED_FILTER    0x00
+#define GY302_GREEN_FILTER  0x01
+#define GY302_BLUE_FILTER   0x02
+#define GY302_CLEAR_FILTER  0x03
+
 // Registros do sensor
 #define ENABLE_REG 0x80
 #define ATIME_REG 0x81
@@ -76,6 +95,105 @@ void gy33_read_color(uint16_t *r, uint16_t *g, uint16_t *b, uint16_t *c)
     *b = gy33_read_register(BDATA_REG);
 }
 
+// GY302 Light Sensor Functions
+
+void gy302_set_frequency_scaling(uint8_t scaling)
+{
+    switch(scaling) {
+        case GY302_POWER_DOWN:
+            gpio_put(GY302_S0_PIN, 0);
+            gpio_put(GY302_S1_PIN, 0);
+            break;
+        case GY302_2_PERCENT:
+            gpio_put(GY302_S0_PIN, 0);
+            gpio_put(GY302_S1_PIN, 1);
+            break;
+        case GY302_20_PERCENT:
+            gpio_put(GY302_S0_PIN, 1);
+            gpio_put(GY302_S1_PIN, 0);
+            break;
+        case GY302_100_PERCENT:
+            gpio_put(GY302_S0_PIN, 1);
+            gpio_put(GY302_S1_PIN, 1);
+            break;
+    }
+}
+
+void gy302_set_color_filter(uint8_t filter)
+{
+    switch(filter) {
+        case GY302_RED_FILTER:
+            gpio_put(GY302_S2_PIN, 0);
+            gpio_put(GY302_S3_PIN, 0);
+            break;
+        case GY302_GREEN_FILTER:
+            gpio_put(GY302_S2_PIN, 1);
+            gpio_put(GY302_S3_PIN, 1);
+            break;
+        case GY302_BLUE_FILTER:
+            gpio_put(GY302_S2_PIN, 0);
+            gpio_put(GY302_S3_PIN, 1);
+            break;
+        case GY302_CLEAR_FILTER:
+            gpio_put(GY302_S2_PIN, 1);
+            gpio_put(GY302_S3_PIN, 0);
+            break;
+    }
+}
+
+uint32_t gy302_read_frequency(void)
+{
+    uint32_t pulse_count = 0;
+    uint32_t start_time = time_us_32();
+    uint32_t timeout = 100000; // 100ms timeout
+    
+    while ((time_us_32() - start_time) < timeout) {
+        if (gpio_get(GY302_OUT_PIN) == 1) {
+            pulse_count++;
+            while (gpio_get(GY302_OUT_PIN) == 1) {
+                if ((time_us_32() - start_time) >= timeout) break;
+            }
+        }
+    }
+    
+    return pulse_count;
+}
+
+uint32_t gy302_read_color(uint8_t filter)
+{
+    gy302_set_color_filter(filter);
+    sleep_ms(10); // Allow sensor to stabilize
+    return gy302_read_frequency();
+}
+
+void gy302_read_all_colors(uint32_t *red, uint32_t *green, uint32_t *blue, uint32_t *clear)
+{
+    *red = gy302_read_color(GY302_RED_FILTER);
+    *green = gy302_read_color(GY302_GREEN_FILTER);
+    *blue = gy302_read_color(GY302_BLUE_FILTER);
+    *clear = gy302_read_color(GY302_CLEAR_FILTER);
+}
+
+void gy302_init(void)
+{
+    gpio_init(GY302_S0_PIN);
+    gpio_init(GY302_S1_PIN);
+    gpio_init(GY302_S2_PIN);
+    gpio_init(GY302_S3_PIN);
+    gpio_init(GY302_OUT_PIN);
+    
+    gpio_set_dir(GY302_S0_PIN, GPIO_OUT);
+    gpio_set_dir(GY302_S1_PIN, GPIO_OUT);
+    gpio_set_dir(GY302_S2_PIN, GPIO_OUT);
+    gpio_set_dir(GY302_S3_PIN, GPIO_OUT);
+    gpio_set_dir(GY302_OUT_PIN, GPIO_IN);
+    
+    gpio_pull_up(GY302_OUT_PIN);
+    
+    gy302_set_frequency_scaling(GY302_20_PERCENT);
+    gy302_set_color_filter(GY302_CLEAR_FILTER);
+}
+
 void setup()
 {
     gpio_init(BUZZER_PIN);
@@ -106,6 +224,9 @@ void setup()
     // Inicializa o sensor de luz BH1750
     bh1750_power_on(I2C_PORT);
 
+    // Inicializa o sensor GY302
+    gy302_init();
+
     pio = pio0;
     offset = pio_add_program(pio, &blink_program);
     sm = pio_claim_unused_sm(pio, true);
@@ -121,6 +242,18 @@ int main()
     printf("Iniciando GY-33...\n");
     gy33_init();
 
+    printf("Iniciando GY302...\n");
+    gy302_init();
+
+    // Read all colors
+    uint32_t red, green, blue, clear;
+    gy302_read_all_colors(&red, &green, &blue, &clear);
+
+    // Read specific color
+    uint32_t light_level = gy302_read_color(GY302_CLEAR_FILTER);
+
+    // Change frequency scaling for different sensitivity
+    gy302_set_frequency_scaling(GY302_100_PERCENT);
     char str_red[5]; // Buffer para armazenar a string
     char str_green[5];
     char str_blue[5];
