@@ -1,24 +1,26 @@
-#include <stdio.h>
-#include "pico/stdlib.h"
-#include "hardware/i2c.h"
-#include "hardware/pio.h"
-#include "blink.pio.h"
-#include "lib/bh1750_light_sensor.h"
-#include "lib/ssd1306.h"
-#include "lib/font.h"
-#include "FreeRTOS.h"
-#include "FreeRTOSConfig.h"
-#include "task.h"
-#include "semphr.h"
-#include "queue.h"
-#include <math.h>
+#include <stdio.h>                       // Biblioteca para entrada/saida padrao: printf, sprintf, etc.
+#include "pico/stdlib.h"                 // SDK do Pico
+#include "hardware/i2c.h"                // I2C do RP2040
+#include "hardware/pio.h"                // PIO do RP2040
+#include "hardware/pwm.h"                // PWM do RP2040
+#include "blink.pio.h"                   // Programa PIO para controlar a matriz de LEDs WS2812
+#include "lib/bh1750_light_sensor.h"     // Biblioteca do sensor de luminosidade BH1750
+#include "lib/ssd1306.h"                 // Biblioteca do display OLED SSD1306
+#include "lib/font.h"                    // Fontes para o SSD1306
+#include "FreeRTOS.h"                    // Kernel FreeRTOS
+#include "FreeRTOSConfig.h"              // Configuracoes do FreeRTOS
+#include "task.h"                        // Tarefas do FreeRTOS
+#include "semphr.h"                      // Semaforos do FreeRTOS
+#include "queue.h"                       // Filas do FreeRTOS
+#include <math.h>                        // Biblioteca de funcoes matematicas
 
 #define WS2812_PIN 7
 #define BUZZER_PIN 21
 
-#define I2C_PORT i2c0 // i2c0 pinos 0 e 1, i2c1 pinos 2 e 3
-#define I2C_SDA 0     // 0 ou 2
-#define I2C_SCL 1     // 1 ou 3
+// I2C para os sensores 
+#define I2C_PORT i2c0                    // Porta I2C para os sensores
+#define I2C_SDA 0                        // SDA para I2C_PORT
+#define I2C_SCL 1                        // SCL para I2C_PORT
 
 // Display na I2C
 #define I2C_PORT_DISP i2c1
@@ -28,26 +30,26 @@
 
 #define GY33_I2C_ADDR 0x29
 
-// GY302 Light Sensor definitions
+// Definicoes do sensor GY302
 #define GY302_S0_PIN 8
 #define GY302_S1_PIN 9
 #define GY302_S2_PIN 10
 #define GY302_S3_PIN 11
 #define GY302_OUT_PIN 12
 
-// GY302 frequency scaling options
+// Escalas de frequencia do GY302
 #define GY302_POWER_DOWN 0x00
 #define GY302_2_PERCENT   0x01
 #define GY302_20_PERCENT  0x02
 #define GY302_100_PERCENT 0x03
 
-// GY302 color filter options
+// Filtros de cor do GY302
 #define GY302_RED_FILTER    0x00
 #define GY302_GREEN_FILTER  0x01
 #define GY302_BLUE_FILTER   0x02
 #define GY302_CLEAR_FILTER  0x03
 
-// Registros do sensor
+// Registros do sensor GY33
 #define ENABLE_REG 0x80
 #define ATIME_REG 0x81
 #define CONTROL_REG 0x8F
@@ -96,8 +98,7 @@ void gy33_read_color(uint16_t *r, uint16_t *g, uint16_t *b, uint16_t *c)
     *b = gy33_read_register(BDATA_REG);
 }
 
-// GY302 Light Sensor Functions
-
+// Seleciona a escala de frequencia do sensor GY302 (S0 e S1)
 void gy302_set_frequency_scaling(uint8_t scaling)
 {
     switch(scaling) {
@@ -120,6 +121,7 @@ void gy302_set_frequency_scaling(uint8_t scaling)
     }
 }
 
+// Seleciona o filtro de cor do sensor GY302 (S2 e S3)
 void gy302_set_color_filter(uint8_t filter)
 {
     switch(filter) {
@@ -142,6 +144,7 @@ void gy302_set_color_filter(uint8_t filter)
     }
 }
 
+// Conta pulsos no pino OUT do sensor GY302
 uint32_t gy302_read_frequency(void)
 {
     uint32_t pulse_count = 0;
@@ -160,6 +163,7 @@ uint32_t gy302_read_frequency(void)
     return pulse_count;
 }
 
+// Seleciona o filtro e executa leitura de frequencia
 uint32_t gy302_read_color(uint8_t filter)
 {
     gy302_set_color_filter(filter);
@@ -167,6 +171,7 @@ uint32_t gy302_read_color(uint8_t filter)
     return gy302_read_frequency();
 }
 
+// Realiza leituras para RED, GREEN, BLUE e CLEAR e as grava nos ponteiros fornecidos
 void gy302_read_all_colors(uint32_t *red, uint32_t *green, uint32_t *blue, uint32_t *clear)
 {
     *red = gy302_read_color(GY302_RED_FILTER);
@@ -175,6 +180,7 @@ void gy302_read_all_colors(uint32_t *red, uint32_t *green, uint32_t *blue, uint3
     *clear = gy302_read_color(GY302_CLEAR_FILTER);
 }
 
+// Inicializa o GY302
 void gy302_init(void)
 {
     gpio_init(GY302_S0_PIN);
@@ -195,6 +201,7 @@ void gy302_init(void)
     gy302_set_color_filter(GY302_CLEAR_FILTER);
 }
 
+// Inicializacoes de perifericos e módulos
 void setup()
 {
     gpio_init(BUZZER_PIN);
@@ -245,14 +252,14 @@ int main()
     printf("Iniciando GY302...\n");
     gy302_init();
 
-    // Read all colors
+    // Le todas as cores
     uint32_t red, green, blue, clear;
     gy302_read_all_colors(&red, &green, &blue, &clear);
 
-    // Read specific color
+    // Le cor especifica
     uint32_t light_level = gy302_read_color(GY302_CLEAR_FILTER);
 
-    // Change frequency scaling for different sensitivity
+    // Muda a escala de frequencia do GY302
     gy302_set_frequency_scaling(GY302_100_PERCENT);
     char str_red[5]; // Buffer para armazenar a string
     char str_green[5];
