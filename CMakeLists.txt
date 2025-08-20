@@ -27,7 +27,7 @@ set(PICO_BOARD pico_w CACHE STRING "Board type")
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
-set(FREERTOS_KERNEL_PATH "/home/carlos2/FreeRTOS-Kernel")
+set(FREERTOS_KERNEL_PATH "D:/FreeRTOS-Kernel")
 include(${FREERTOS_KERNEL_PATH}/portable/ThirdParty/GCC/RP2040/FreeRTOS_Kernel_import.cmake)
 
 project(SensoresCorELuminosidade C CXX ASM)
@@ -45,11 +45,11 @@ pico_set_program_name(SensoresCorELuminosidade "SensoresCorELuminosidade")
 pico_set_program_version(SensoresCorELuminosidade "0.1")
 
 # Generate PIO header
-pico_generate_pio_header(SensoresCorELuminosidade ${CMAKE_CURRENT_LIST_DIR}/blink.pio)
+pico_generate_pio_header(SensoresCorELuminosidade ${CMAKE_CURRENT_LIST_DIR}/matriz_led.pio)
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(SensoresCorELuminosidade 0)
-pico_enable_stdio_usb(SensoresCorELuminosidade 0)
+pico_enable_stdio_uart(SensoresCorELuminosidade 1)
+pico_enable_stdio_usb(SensoresCorELuminosidade 1)
 
 # Add the standard library to the build
 target_link_libraries(SensoresCorELuminosidade
@@ -64,7 +64,7 @@ target_include_directories(SensoresCorELuminosidade PRIVATE
 target_link_libraries(SensoresCorELuminosidade 
         hardware_i2c
         hardware_pio
-        hardware_pwm
+        hardware_clocks
         FreeRTOS-Kernel 
         FreeRTOS-Kernel-Heap4
         )

@@ -2,17 +2,11 @@
 #include "pico/stdlib.h"                 // SDK do Pico
 #include "hardware/i2c.h"                // I2C do RP2040
 #include "hardware/pio.h"                // PIO do RP2040
-#include "hardware/pwm.h"                // PWM do RP2040
-#include "blink.pio.h"                   // Programa PIO para controlar a matriz de LEDs WS2812
+#include "hardware/clocks.h"             // Clocks do RP2040
+#include "matriz_LED.pio.h"              // Programa PIO para controlar a matriz de LEDs WS2812
 #include "lib/bh1750_light_sensor.h"     // Biblioteca do sensor de luminosidade BH1750
 #include "lib/ssd1306.h"                 // Biblioteca do display OLED SSD1306
 #include "lib/font.h"                    // Fontes para o SSD1306
-#include "FreeRTOS.h"                    // Kernel FreeRTOS
-#include "FreeRTOSConfig.h"              // Configuracoes do FreeRTOS
-#include "task.h"                        // Tarefas do FreeRTOS
-#include "semphr.h"                      // Semaforos do FreeRTOS
-#include "queue.h"                       // Filas do FreeRTOS
-#include <math.h>                        // Biblioteca de funcoes matematicas
 
 #define WS2812_PIN 7
 #define BUZZER_PIN 21
@@ -64,6 +58,90 @@ ssd1306_t ssd;
 PIO pio;
 uint offset;
 uint sm;
+float red, green, blue;
+
+double apagar_leds[25][3] = // Apagar LEDs da matriz
+    {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+
+double desenho_cores[25][3]; // Desenho de acordo a leitura do gy33
+
+// Função para atualizar a matriz de cores com base nas leituras do GY33
+void atualizar_matriz_cores(double matriz[25][3], uint16_t r, uint16_t g, uint16_t b) {
+    // Normaliza os valores RGB (0-65535) para o range 0.0-1.0
+    double red_norm = (double)r / 65535.0;
+    double green_norm = (double)g / 65535.0;
+    double blue_norm = (double)b / 65535.0;
+    
+    printf("Valores normalizados - R: %.2f, G: %.2f, B: %.2f\n", red_norm, green_norm, blue_norm);
+    // Preenche toda a matriz com a cor detectada
+    for (int i = 0; i < 25; i++) {
+        matriz[i][0] = red_norm;   // Red
+        matriz[i][1] = green_norm; // Green
+        matriz[i][2] = blue_norm;  // Blue
+    }
+}
+
+// Função para controlar o buzzer baseado no nível de Lux
+void buzzer_lux(uint16_t lux) {
+    static uint32_t ultimo_beep = 0;
+    uint32_t tempo_atual = time_us_32() / 1000; // Converte para milissegundos
+    uint32_t intervalo_beep;
+    
+    // Define o intervalo do beep baseado no nível de Lux
+    if (lux > 1000) {
+        intervalo_beep = 100;  // Muito brilhante (100ms)
+    } else if (lux > 500) {
+        intervalo_beep = 300;  // Brilhante (300ms)
+    } else if (lux > 200) {
+        intervalo_beep = 600;  // Moderado (600ms)
+    } else if (lux > 50) {
+        intervalo_beep = 1000; // Baixo (1s)
+    } else {
+        intervalo_beep = 2000; // Muito baixo (2s)
+    }
+    
+    // Verifica se é hora de fazer o beep
+    if (tempo_atual - ultimo_beep >= intervalo_beep) {
+        gpio_put(BUZZER_PIN, 1);  // Liga o buzzer
+        sleep_ms(50);             // Duração do beep (50ms)
+        gpio_put(BUZZER_PIN, 0);  // Desliga o buzzer
+        ultimo_beep = tempo_atual;
+    }
+}
+
+// Função para converter RGB em um valor de 32 bits
+uint matrix_rgb(float r, float g, float b)
+{
+    unsigned char R, G, B;
+    R = r * 255;
+    G = g * 255;
+    B = b * 255;
+    return (G << 24) | (R << 16) | (B << 8);
+}
+
+// Função para desenhar na matriz com verificações de segurança
+void desenho_pio(double desenho[25][3], uint32_t valor_led, PIO pio, uint sm)
+{   
+    // Envia dados para a matriz de LEDs com timeout
+    for (int16_t i = 0; i < 25; i++)
+    {
+        valor_led = matrix_rgb(desenho[i][0], desenho[i][1], desenho[i][2]);
+        
+        // Timeout simples para evitar travamentos
+        uint32_t timeout = 1000; // 1000 tentativas
+        while (pio_sm_is_tx_fifo_full(pio, sm) && timeout > 0) {
+            sleep_us(1);
+            timeout--;
+        }
+        
+        if (timeout > 0) {
+            pio_sm_put(pio, sm, valor_led);
+        } else {
+            printf("Timeout no LED %d\n", i);
+            break; // Sai do loop se houver timeout
+        }
+    }
+}
 
 // Função para escrever um valor em um registro do GY-33
 void gy33_write_register(uint8_t reg, uint8_t value)
@@ -232,17 +310,33 @@ void setup()
     // Inicializa o sensor de luz BH1750
     bh1750_power_on(I2C_PORT);
 
+    // Inicializa o PIO para controle dos LEDs WS2812
+    gpio_init(WS2812_PIN);          
+    gpio_set_dir(WS2812_PIN, GPIO_OUT);
+    bool frequenciaClock;                                    // Variável para a frequência de clock
+    frequenciaClock = set_sys_clock_khz(128000, false);      // frequência de clock de 128MHz
     pio = pio0;
-    offset = pio_add_program(pio, &blink_program);
+    offset = pio_add_program(pio, &matriz_LED_program);
     sm = pio_claim_unused_sm(pio, true);
-    blink_program_init(pio, sm, offset, WS2812_PIN);
+    pio_sm_set_enabled(pio, sm, true);                       // Habilita a máquina de estado
+    matriz_LED_program_init(pio, sm, offset, WS2812_PIN);
 }
 
 int main()
 {
     stdio_init_all();
+    printf("Iniciando sistema...\n");
+
+    // Aguarda 2 segundos para inicialização
+    sleep_ms(2000);
+
     setup();
-    
+    printf("Setup concluído!\n");
+
+    // Apaga os LEDs da matriz inicialmente
+    desenho_pio(apagar_leds, 0, pio, sm);
+    printf("LEDs apagados\n");
+
     char str_lux[10]; // Buffer para armazenar a string
 
     printf("Iniciando GY-33...\n");
@@ -267,20 +361,26 @@ int main()
     char str_clear[5];
 
     bool cor = true;
+    uint32_t loop_counter = 0;
+    
     while (true)
-    {
+    {        
         uint16_t r, g, b, c;
         gy33_read_color(&r, &g, &b, &c);
-        printf("Cor detectada - R: %d, G: %d, B: %d, Clear: %d\n", r, g, b, c);
 
-        sprintf(str_red, "%d R", r); // Converte o inteiro em string
-        sprintf(str_green, "%d G", g);
-        sprintf(str_blue, "%d B", b);
-        sprintf(str_clear, "%d C", c);
+        // Atualiza a matriz de cores com base na leitura do GY33
+        atualizar_matriz_cores(desenho_cores, r, g, b);
+
+        sprintf(str_red, "R:%d", r); // Converte o inteiro em string
+        sprintf(str_green, "G:%d", g);
+        sprintf(str_blue, "B:%d", b);
+        sprintf(str_clear, "C:%d", c);
 
         // Leitura do sensor de Luz BH1750
         uint16_t lux = bh1750_read_measurement(I2C_PORT);
-        printf("Lux = %d\n", lux);
+
+        // Controla o buzzer baseado no nível de Lux
+        buzzer_lux(lux);
 
         sprintf(str_lux, "%d Lux", lux); // Converte o inteiro em string
 
@@ -289,27 +389,29 @@ int main()
         ssd1306_fill(&ssd, !cor);                               // Limpa o display
 
         // Cabeçalho
-        ssd1306_draw_string(&ssd, "CEPEDI   TIC37", 8, 6);      
-        ssd1306_draw_string(&ssd, "EMBARCATECH", 20, 14);       
+        ssd1306_draw_string(&ssd, "SENSORES", 30, 6);        
 
         // Linhas separadoras
-        ssd1306_line(&ssd, 3, 24, 123, 24, cor);               
-        ssd1306_line(&ssd, 3, 40, 123, 40, cor);                
+        ssd1306_line(&ssd, 3, 18, 123, 18, cor);               
+        ssd1306_line(&ssd, 3, 33, 123, 33, cor);                
 
         // Sensor BH1750 
-        ssd1306_draw_string(&ssd, "BH1750:", 8, 28);           
-        ssd1306_draw_string(&ssd, str_lux, 70, 28);            
+        ssd1306_draw_string(&ssd, "BH1750:", 5, 22);           
+        ssd1306_draw_string(&ssd, str_lux, 65, 22);            
 
         // Sensor GY33 
-        ssd1306_draw_string(&ssd, "GY33:", 8, 46);          
-        //ssd1306_draw_string(&ssd, str_gy33, 70, 46);         
+        ssd1306_draw_string(&ssd, "GY33:", 5, 40);
+        ssd1306_draw_string(&ssd, str_red, 8, 50);
+        ssd1306_draw_string(&ssd, str_green, 43, 50);
+        ssd1306_draw_string(&ssd, str_blue, 78, 50);
+        ssd1306_draw_string(&ssd, str_clear, 78, 40);
 
         // Atualiza o display
         ssd1306_send_data(&ssd);
 
+        // Desenha na matriz de LEDs com a cor detectada pelo GY33
+        desenho_pio(desenho_cores, 0, pio, sm);
+
         sleep_ms(500);
     }
-
-    vTaskStartScheduler();
-    panic_unsupported();
 }
